@@ -1,0 +1,7 @@
+domain: elastic.demo.io
+repo: elastic-demo
+resources:
+- group: elasticweb
+  kind: ElasticWeb
+  version: v1
+version: "2"
