@@ -1,0 +1,7 @@
+apiVersion: elasticscale.com.sjtu.cit/v1
+kind: BackupDeployment
+metadata:
+  name: backupdeployment-sample
+spec:
+  # Add fields here
+  foo: bar

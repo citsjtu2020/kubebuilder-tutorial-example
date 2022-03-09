@@ -1,0 +1,7 @@
+domain: com.sjtu.cit
+repo: backup-operator
+resources:
+- group: elasticscale
+  kind: BackupDeployment
+  version: v1
+version: "2"

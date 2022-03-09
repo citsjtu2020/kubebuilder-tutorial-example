@@ -1,0 +1,20 @@
+# permissions for end users to view backupdeployments.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backupdeployment-viewer-role
+rules:
+- apiGroups:
+  - elasticscale.com.sjtu.cit
+  resources:
+  - backupdeployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - elasticscale.com.sjtu.cit
+  resources:
+  - backupdeployments/status
+  verbs:
+  - get

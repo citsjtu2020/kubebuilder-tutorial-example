@@ -1,0 +1,24 @@
+# permissions for end users to edit backupdeployments.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backupdeployment-editor-role
+rules:
+- apiGroups:
+  - elasticscale.com.sjtu.cit
+  resources:
+  - backupdeployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - elasticscale.com.sjtu.cit
+  resources:
+  - backupdeployments/status
+  verbs:
+  - get
