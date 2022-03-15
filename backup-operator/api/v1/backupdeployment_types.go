@@ -86,6 +86,12 @@ type BackupDeploymentStatus struct {
 
 }
 
+type DeployState string
+
+var ActiveState DeployState = "active"
+var WaitingState DeployState = "waiting"
+var BackupState DeployState = "backup"
+
 // +kubebuilder:object:root=true
 
 // BackupDeployment is the Schema for the backupdeployments API
