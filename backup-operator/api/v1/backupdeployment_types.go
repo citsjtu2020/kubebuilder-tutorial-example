@@ -17,9 +17,9 @@ limitations under the License.
 package v1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/api/core/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -40,24 +40,18 @@ type BackupDeploymentSpec struct {
 	// +optional
 	InitalWait *int64 //default: ms
 
-	
 	// +kubebuilder:validation:MinLength=0
 	Action string `json:"action"` // control the backup to waiting or running
 
-
-	
 	// +kubebuilder:validation:Minimum=0
 	BackupReplicas *int64 `json:"backupReplicas"`
-	
+
 	// +kubebuilder:validation:Minimum=1
 	RunningReplicas *int64 `json:"runningReplicas"` // at last 1  replica need to be running
-
 
 	BackupSpec appsv1.DeploymentSpec `json:"backupSpec"`
 
 	RunningSpec appsv1.DeploymentSpec `json:"runningSpec"`
-	
-	
 }
 
 // BackupDeploymentStatus defines the observed state of BackupDeployment
@@ -79,11 +73,9 @@ type BackupDeploymentStatus struct {
 	// +optional
 	Status string
 
-
 	// Information when was the last time the job was successfully scheduled.
 	// +optional
 	LastScaleTime *metav1.Time `json:"lastScaleTime,omitempty"`
-
 }
 
 type DeployState string
@@ -91,6 +83,17 @@ type DeployState string
 var ActiveState DeployState = "active"
 var WaitingState DeployState = "waiting"
 var BackupState DeployState = "backup"
+
+type ActionState string
+
+var Running ActionState = "running"
+var Waiting ActionState = "waiting"
+
+type ScaleState string
+
+var Scale ScaleState = "scale"
+var Keep ScaleState = "keep"
+var DeploymentName = "deployment"
 
 // +kubebuilder:object:root=true
 
