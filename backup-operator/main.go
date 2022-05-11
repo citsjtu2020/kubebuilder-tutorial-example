@@ -18,14 +18,15 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
-	"os"
-	"path/filepath"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -54,17 +55,27 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 
-	// init a clientset
-	var kubeconfig *string
+	//init a clientset
+	var kubeConfigBackCRD *string
 	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+		kubeConfigBackCRD = flag.String("kubeconfig111", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+		kubeConfigBackCRD = flag.String("kubeconfig111", "", "absolute path to the kubeconfig file")
 	}
 	flag.Parse()
-
+	// SetLogger sets a concrete logging implementation for all deferred Loggers.
+	// UseDevMode sets the logger to use (or not use) development mode (more human-readable output,
+	// extra stack traces and logging information, etc). See Options.Development
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
+	// NewManager returns a new Manager for creating Controllers
+	// manager.New  func New(config *rest.Config, options Options) (Manager, error)
+	// GetConfigOrDie creates a *rest.Config for talking to a Kubernetes apiserver.
+	// If --kubeconfig is set, will use the kubeconfig file at that location.  Otherwise will assume running
+	// in cluster and use the cluster provided kubeconfig.
+	//
+	// Will log an error and exit if there is an error creating the rest.Config.
+	// Options are the arguments for creating a new Manager
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:             scheme,
 		MetricsBindAddress: metricsAddr,
@@ -76,8 +87,8 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	// 创建clientset客户端
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeConfigBackCRD)
 	if err != nil {
 		setupLog.Error(err, "unable to start kubeconfig")
 	}
@@ -85,6 +96,8 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "unable to create clientSet")
 	}
+
+	// 创建BackupDeploymentReconciler
 	if err = (&controllers.BackupDeploymentReconciler{
 		Client:    mgr.GetClient(),
 		Clientset: *clientset,
@@ -96,6 +109,16 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
+	// Start starts all registered Controllers and blocks until the context is cancelled.
+	// Returns an error if there is an error starting any controller.
+	//
+	// If LeaderElection is used, the binary must be exited immediately after this returns,
+	// otherwise components that need leader election might continue to run after the leader
+	// lock was lost.
+
+	// SetupSignalHandler registered for SIGTERM and SIGINT. A stop channel is returned
+	// which is closed on one of these signals. If a second signal is caught, the program
+	// is terminated with exit code 1.
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")

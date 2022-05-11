@@ -20,12 +20,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+
 	//"sigs.k8s.io/controller-runtime/pkg/log"
 	"sort"
 	"strconv"
@@ -74,7 +76,7 @@ var (
 	ScheduledTimeAnnotation = "elasticscale.com.sjtu.cit/scheduled-at"
 	DeployStateAnnotation   = "elasticscale.com.sjtu.cit/state"
 	DeployIDAnnotation      = "elasticscale.com.sjtu.cit/id"
-	jobOwnerKey             = ".metadata.controller"
+	deployOwnerKey          = ".metadata.controller"
 	apiGVStr                = elasticscalev1.GroupVersion.String()
 	deploy_delete_policy    = metav1.DeletePropagationForeground
 )
@@ -99,10 +101,10 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 	// your logic here
 	ctx := context.Background() //context
 	/*
-		logging handle 用于记录日志, controller-runtime 通过 logr 库结构化日志记录。
-		稍后我们将看到，日志记录通过将 key-value 添加到静态消息中而起作用
-		我们可以在 reconcile 方法的顶部提前分配一些 key-value ,以便查找在这个 reconciler 中所有的日志
-
+			logging handle 用于记录日志, controller-runtime 通过 logr 库结构化日志记录。
+			稍后我们将看到，日志记录通过将 key-value 添加到静态消息中而起作用
+			我们可以在 reconcile 方法的顶部提前分配一些 key-value ,以便查找在这个 reconciler 中所有的日志
+		dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient
 	*/
 	log := r.Log.WithValues("backupdeployment", req.NamespacedName) //logging handle
 
@@ -115,24 +117,25 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 		//        // on deleted requests.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	//if backdeploy.Spec.ServiceName == nil{
-	//
-	//}
+	lastID := new(int64)
+	if backdeploy.Status.LastID == nil {
+		backdeploy.Status.LastID = lastID
+	}
+
 	qpslabels := r.findLabels(ctx, backdeploy)
 	initdur := time.Duration(*backdeploy.Spec.InitalWait) * time.Millisecond
-	if qpslabels == nil {
+	if len(qpslabels) == 0 {
 		log.V(1).Info("some service are not ready", "depend service", fmt.Sprintf("%v", backdeploy.Spec.ServiceName))
-		return ctrl.Result{RequeueAfter: initdur * time.Millisecond}, nil
+		return ctrl.Result{Requeue: false, RequeueAfter: initdur}, nil
 	}
 
 	var childDeploys appsv1.DeploymentList
-	if err := r.List(ctx, &childDeploys, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		log.Error(err, "unable to list child Jobs")
-		return ctrl.Result{}, err
+	if err := r.List(ctx, &childDeploys, client.InNamespace(req.Namespace), client.MatchingFields{deployOwnerKey: req.Name}); err != nil {
+		log.V(1).Info("unable to List Deployments in current namespace")
 	}
 
 	var activeDeploys map[int]*appsv1.Deployment = make(map[int]*appsv1.Deployment)
-	var backDeploys []*appsv1.Deployment
+	var backDeploys map[int]*appsv1.Deployment = make(map[int]*appsv1.Deployment)
 	var waitDeploys map[int]*appsv1.Deployment = make(map[int]*appsv1.Deployment)
 
 	runningreplicas := 0
@@ -145,7 +148,7 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 			if !ok2 {
 				activeDeploys[int(*backdeploy.Status.LastID)] = &childDeploys.Items[i]
 				tmpvalue := *backdeploy.Status.LastID
-				*backdeploy.Status.LastID = (tmpvalue + 1)
+				*backdeploy.Status.LastID = tmpvalue + 1
 			} else {
 				activeDeploys[idx] = &childDeploys.Items[i]
 			}
@@ -160,13 +163,60 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 			}
 			runningreplicas += int(*(&childDeploys.Items[i]).Spec.Replicas)
 		case string(elasticscalev1.BackupState):
-			backDeploys = append(backDeploys, &childDeploys.Items[i])
+			backDeploys[idx] = &childDeploys.Items[i]
 			backupreplicas += int(*(&childDeploys.Items[i]).Spec.Replicas)
 		case "":
 			continue
 		}
 	}
-
+	if backdeploy.Status.LastID == nil {
+		log.V(1).Info("There don't exist any deployments controlled by" + req.Namespace + "/" + req.Name)
+		*backdeploy.Status.LastID = 0
+	}
+	if backupreplicas != int(*backdeploy.Spec.BackupReplicas) {
+		//backup scale out
+		if backupreplicas < int(*backdeploy.Spec.BackupReplicas) { //scale out
+			var replicas int32 = int32(*backdeploy.Spec.BackupReplicas) - int32(backupreplicas)
+			tmpvalue := *backdeploy.Status.LastID
+			deploy, err := createDeployment(ctx, r, &backdeploy, req, backupType, &replicas, nil)
+			if err != nil {
+				log.Error(err, "create backup deployment fault")
+				return ctrl.Result{}, err
+			}
+			backDeploys[int(tmpvalue)] = deploy
+			goto RECONCILED
+		} else if backupreplicas > int(*backdeploy.Spec.BackupReplicas) {
+			deletingNums := backupreplicas - int(*backdeploy.Spec.BackupReplicas)
+			var backs []int
+			for k, _ := range backDeploys {
+				backs = append(backs, k)
+			}
+			sort.Ints(backs)
+			deletedNums := 0
+			for _, v := range backs {
+				deploy := backDeploys[v]
+				if deletedNums+int(*deploy.Spec.Replicas) <= deletingNums {
+					deployReplicas := int(*deploy.Spec.Replicas)
+					err := r.DeleteDeploy(ctx, deploy)
+					if err != nil {
+						log.Error(err, "delete backup failed")
+						return ctrl.Result{}, err
+					}
+					delete(backDeploys, v)
+					deletedNums += deployReplicas
+				} else if deletedNums < deletingNums {
+					moreThanDeploys := deletingNums - deletedNums
+					*deploy.Spec.Replicas -= int32(moreThanDeploys)
+					if *deploy.Spec.Replicas <= 0 {
+						log.Info("BackupDeployments: scale in amount exception")
+						return ctrl.Result{}, nil
+					}
+					break
+				}
+			}
+			goto RECONCILED
+		}
+	}
 	if runningreplicas == int(*backdeploy.Spec.RunningReplicas) && backupreplicas == int(*backdeploy.Spec.BackupReplicas) {
 		if backdeploy.Spec.Action == string(elasticscalev1.Running) {
 			if backdeploy.Status.Status == string(elasticscalev1.Scale) {
@@ -210,11 +260,96 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 					}
 				}
 			}
-			return ctrl.Result{}, nil
+			goto RECONCILED
 		}
 
 	} else {
 		if runningreplicas < int(*backdeploy.Spec.RunningReplicas) {
+			aim_scale_out := int(*backdeploy.Spec.RunningReplicas) - runningreplicas
+			nowScaleOut := 0
+			if aim_scale_out > backupreplicas {
+				log.Info("Do not exist enough backup when scaling out")
+				return ctrl.Result{}, nil
+			}
+			if backupreplicas > 0 {
+				var backid []int
+				for k, _ := range backDeploys {
+					backid = append(backid, k)
+				}
+				sort.Ints(backid)
+				var backLabels []string
+				for _, v := range backid {
+					tempReplicas := backDeploys[v].Status.Replicas
+					tempDeploy := backDeploys[v]
+					tempLabelsMap := findNodenames(ctx, r, tempDeploy)
+					var tempLabels []string
+					for k := range tempLabelsMap {
+						tempLabels = append(tempLabels, k)
+					}
+					// var deleteSlice []*appsv1.Deployment
+					if int(tempReplicas)+nowScaleOut <= aim_scale_out {
+						// 需要删除这个backdeploy
+						//
+						// backLabels = append(backLabels, tempLabels...)
+						// deleteSlice = append(deleteSlice, tempDeploy)
+						nowScaleOut += int(tempReplicas)
+						err := r.DeleteDeploy(ctx, tempDeploy)
+						if err != nil {
+							log.Error(err, "delete backup deploy failed while scaling out waiting replicas")
+							return ctrl.Result{}, err
+						}
+						// backdeploy.Status.Back
+
+					} else if nowScaleOut < aim_scale_out {
+						// 不需要删除这个backdeploy 只需要缩减这个deploy，缩减完毕后可以退出
+						if *backDeploys[v].Spec.Replicas > int32(aim_scale_out-nowScaleOut) {
+							//删除这个deploy管理的若干个pod
+							scaleValue := int(aim_scale_out - nowScaleOut)
+							nowScaleOut += scaleValue
+							backLabels = append(backLabels, tempLabels...)
+							err := r.Scalein(ctx, backDeploys[v], scaleValue)
+							if err != nil {
+								log.Error(err, "back to waiting failed")
+								return ctrl.Result{}, err
+
+							}
+							break
+							// backlabels :=  findNodenames(ctx, r, tempDeploy)
+							// deploy, err := createDeployment(ctx, r, &backdeploy, req, waitingType, replicas, &backLabels)
+						}
+					} else if nowScaleOut > aim_scale_out {
+						// 删除过多，不存在这种情况
+						log.Info("waiting deploy Scale out exception")
+						break
+					}
+				}
+				// for _, v := range deleteSlice {
+				// 	replicas := v.Spec.Replicas
+				// 	deploy, err := createDeployment(ctx, r, &backdeploy, req, waitingType, replicas, &backLabels)
+				// 	if err != nil {
+				// 		log.Error(err, "scale out running deploy failed")
+				// 		return ctrl.Result{}, err
+				// 	}
+				// 	tempID := *backdeploy.Status.LastID
+				// 	backDeploys[int(tempID)] = deploy
+				// }
+				// for _, v := range deleteSlice {
+				// 	strID := v.ObjectMeta.Annotations[DeployIDAnnotation]
+				// 	intID, err := strconv.Atoi(strID)
+				// 	if err != nil {
+				// 		log.Error(err, "strID to intID failed")
+				// 		return ctrl.Result{}, err
+				// 	}
+				// 	err = r.DeleteDeploy(ctx, v)
+				// 	if err != nil {
+				// 		log.Error(err, "delete failed when scaling out running")
+				// 		return ctrl.Result{}, err
+				// 	}
+				// 	delete(backDeploys, intID)
+				// }
+			} else {
+				log.Info("back up replicas= 0")
+			}
 
 		} else {
 			if runningreplicas > int(*backdeploy.Spec.RunningReplicas) {
@@ -353,30 +488,8 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 				}
 			}
 		}
-
-		if backupreplicas != int(*backdeploy.Spec.BackupReplicas) {
-			if backupreplicas < int(*backdeploy.Spec.BackupReplicas) { //scale out
-				var replicas int32 = int32(*backdeploy.Spec.BackupReplicas) - int32(backupreplicas)
-				tmpvalue := *backdeploy.Status.LastID
-				name, err := createDeployment(ctx, r, &backdeploy, req, backupType, &replicas)
-				if err != nil {
-					log.Error(err, "create deployment fault")
-					return ctrl.Result{}, err
-				}
-
-				deploy, err := r.AppsV1().Deployments(backdeploy.Namespace).Get(name, metav1.GetOptions{})
-				if err != nil {
-					log.Error(err, "unable to get deployment")
-					return ctrl.Result{}, err
-				}
-				backDeploys[tmpvalue] = deploy
-			} else {
-
-			}
-
-		}
 	}
-
+RECONCILED:
 	for _, activeDeploy := range activeDeploys {
 		deployRef, err := ref.GetReference(r.Scheme, activeDeploy)
 		if err != nil {
@@ -405,7 +518,7 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 	}
 
 	//for i,deploy
-
+	r.Update(ctx, &backdeploy)
 	return ctrl.Result{}, nil
 }
 
@@ -469,11 +582,13 @@ func isDeployStatus(deploy *appsv1.Deployment) (bool, bool, string, int) {
 // +kubebuilder:docs-gen:collapse=isDeployStatus
 
 func (r *BackupDeploymentReconciler) findLabels(ctx context.Context, bd elasticscalev1.BackupDeployment) (labels map[string]string) {
+	// 根据bd中的ServiceName列表遍历当前Namespace下是否存在对应的service
+	// 如果存在对应的Service，就返回这些service的Spec.Selector键值对
 	services := bd.Spec.ServiceName
 	labels = make(map[string]string)
 	service := new(corev1.Service)
 	for _, svc := range services {
-		namespacedname := types.NamespacedName{bd.Namespace, svc}
+		namespacedname := types.NamespacedName{Namespace: bd.Namespace, Name: svc}
 		err := r.Get(ctx, namespacedname, service)
 		if err != nil {
 			labels = nil
@@ -489,40 +604,110 @@ func (r *BackupDeploymentReconciler) findLabels(ctx context.Context, bd elastics
 }
 
 func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploycrd *elasticscalev1.BackupDeployment,
-	req ctrl.Request, types deployType, replicas *int32) (string, error) {
+	req ctrl.Request, types deployType, replicas *int32, hostLabels *[]string) (*appsv1.Deployment, error) {
 	log := r.Log.WithValues("func", "createDeployment")
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: deploycrd.Namespace,
-			Name:      strings.Join([]string{deploycrd.Name, "-", string(*deploycrd.Status.LastID)}, ""),
+			Namespace:   deploycrd.Namespace,
+			Name:        strings.Join([]string{deploycrd.Name, "-", strconv.Itoa(int(*deploycrd.Status.LastID))}, ""),
+			Annotations: map[string]string{DeployIDAnnotation: strconv.FormatInt(*deploycrd.Status.LastID, 10)},
 		},
 		Spec: deploycrd.Spec.BackupSpec,
 	}
 	if types == waitingType {
 		deploy.Spec = deploycrd.Spec.RunningSpec
+		deploy.Annotations[DeployStateAnnotation] = string(elasticscalev1.WaitingState)
+		affinity := corev1.NodeAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+				{
+					Weight: 100,
+					Preference: corev1.NodeSelectorTerm{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "kubernetes.io/hostname",
+								Operator: corev1.NodeSelectorOperator("In"),
+								Values:   *hostLabels,
+							},
+						},
+					},
+				},
+			},
+		}
+		allocAffinity := new(corev1.Affinity)
+		allocAffinity.NodeAffinity = &affinity
+		deploy.Spec.Template.Spec.Affinity = allocAffinity
+	} else if types == backupType {
+		deploy.Spec = deploycrd.Spec.BackupSpec
+		deploy.Annotations[DeployStateAnnotation] = string(elasticscalev1.BackupState)
+
 	}
-	*deploy.Spec.Replicas = *replicas
+	deploy.Spec.Replicas = replicas
 	deploy.Spec.Template.Labels[elasticscalev1.DeploymentName] = deploy.Name
 
 	if err := ctrl.SetControllerReference(deploycrd, deploy, r.Scheme); err != nil {
 		log.Error(err, "deploymentSetControllerReference error")
-		return "", err
+		return nil, err
 	}
 
-	if err := r.Create(ctx, deploy); err != nil {
-		log.Error(err, "create deployment error")
-		return "", err
+	deployment, err := r.AppsV1().Deployments(deploy.Namespace).Create(deploy)
+	if err != nil {
+		log.Error(err, "unable to create deployment in function create")
+		return nil, err
 	}
 	*deploycrd.Status.LastID = *deploycrd.Status.LastID + 1
 	log.Info("create deployment success")
-	return deploy.Name, nil
+	r.Update(ctx, deploycrd)
+	return deployment, nil
+}
+
+func findNodenames(ctx context.Context, r *BackupDeploymentReconciler, dp *appsv1.Deployment) map[string]int {
+	log := r.Log.WithValues("fun", "findNodenames")
+	options := metav1.ListOptions{
+		LabelSelector: strings.Join([]string{elasticscalev1.DeploymentName, "=", dp.Name}, ""),
+	}
+	podList, err := r.CoreV1().Pods(dp.Namespace).List(options)
+	if err != nil {
+		log.Error(err, "findNodenames error")
+	}
+	var hostNames map[string]int = make(map[string]int)
+	for _, pods := range podList.Items {
+		node, err := r.CoreV1().Nodes().Get(pods.Spec.NodeName, metav1.GetOptions{})
+		if err != nil {
+			log.Error(err, "find hostname error")
+			return nil
+		}
+		hostNames[node.Labels["kubernetes.io/hostname"]] = 1
+	}
+	return hostNames
 }
 
 // +kubebuilder:docs-gen:collapse=findLabels
 
 func (r *BackupDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// 类型断言
+	//返回Object Controller的Name
+	extractValue := func(rawObj runtime.Object) []string {
+		deploys := rawObj.(*appsv1.Deployment)
+		owner := metav1.GetControllerOf(deploys)
+		if owner == nil {
+			return nil
+		}
+		// ...make sure it's a CronJob...
+		if owner.APIVersion != apiGVStr || owner.Kind != "BackupDeployment" {
+			return nil
+		}
+		// ...and if so, return it
+		return []string{owner.Name}
+	}
+	// GetFieldIndexer returns a client.FieldIndexer configured with the client
+	// FieldIndexer knows how to index over a particular "field" such that it
+	// can later be used by a field selector.
+	if err := mgr.GetFieldIndexer().IndexField(&appsv1.Deployment{}, deployOwnerKey, extractValue); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&elasticscalev1.BackupDeployment{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }
