@@ -264,6 +264,12 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 		}
 
 	} else {
+		// 创建waiting deploy。先杀死backdeploy，记录杀死的deploy管理的pod所在node
+		// 以这些node为waiting deploy的亲和性字段创建deploy
+		// 遍历backup deploy:
+		// 分为两种情况。当要创建的pod数量小于当前deploy管理的pod数量，可以直接修改当前deploy.spec.replicas
+		// 当要创建的pod数量大于当前deploy管理的pod数量，需要直接杀死当前的backup，并且以这些pod所在node为亲和性字段创建新deploy
+		// 注意每次修改deploy的数量都要更新三个临时状态map。这三个临时状态map在程序末尾会写进集群状态
 		if runningreplicas < int(*backdeploy.Spec.RunningReplicas) {
 			aim_scale_out := int(*backdeploy.Spec.RunningReplicas) - runningreplicas
 			nowScaleOut := 0
@@ -603,6 +609,7 @@ func (r *BackupDeploymentReconciler) findLabels(ctx context.Context, bd elastics
 	return
 }
 
+// 根据指定的replicas和nodename创建deployment
 func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploycrd *elasticscalev1.BackupDeployment,
 	req ctrl.Request, types deployType, replicas *int32, hostLabels *[]string) (*appsv1.Deployment, error) {
 	log := r.Log.WithValues("func", "createDeployment")
