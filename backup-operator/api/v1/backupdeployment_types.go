@@ -44,10 +44,18 @@ type BackupDeploymentSpec struct {
 	Action string `json:"action"` // control the backup to waiting or running
 
 	// +kubebuilder:validation:Minimum=0
+	ScheduleStrategy *int64 `json:"scheduleStrategy"`
+
+	// +kubebuilder:validation:Minimum=0
+	AllocateStrategy *int64 `json:"allocateStrategy"`
+
+	// +kubebuilder:validation:Minimum=0
 	BackupReplicas *int64 `json:"backupReplicas"`
 
 	// +kubebuilder:validation:Minimum=1
 	RunningReplicas *int64 `json:"runningReplicas"` // at last 1  replica need to be running
+
+	UnitReplicas *int64 `json:"unitReplicas"`
 
 	BackupSpec appsv1.DeploymentSpec `json:"backupSpec"`
 
@@ -72,6 +80,15 @@ type BackupDeploymentStatus struct {
 
 	// +optional
 	Status string
+
+	// +optional
+	ScheduleStrategy *int64 `json:"scheduleStrategy,omitempty"`
+
+	// +optional
+	AllocateStrategy *int64 `json:"allocateStrategy,omitempty"`
+
+	// +optionl
+	UnitReplicas *int64 `json:"unitReplicas"`
 
 	// Information when was the last time the job was successfully scheduled.
 	// +optional
