@@ -112,6 +112,7 @@ var Scale ScaleState = "scale"
 var Keep ScaleState = "keep"
 var DeploymentName = "deployment"
 
+// +kubebuilder:subresource:status
 // +kubebuilder:object:root=true
 
 // BackupDeployment is the Schema for the backupdeployments API
@@ -122,6 +123,16 @@ type BackupDeployment struct {
 	Spec   BackupDeploymentSpec   `json:"spec,omitempty"`
 	Status BackupDeploymentStatus `json:"status,omitempty"`
 }
+
+type ScheduleStrategy int
+var ScheduleOnSameHosts ScheduleStrategy = 1
+var ScheduleOnSameHostsHard ScheduleStrategy = 2
+var ScheduleRoundBin ScheduleStrategy = 3
+var ScheduleRoundBinHard ScheduleStrategy = 4
+
+type AllocateStrategy int
+var BinPacking AllocateStrategy = 1
+var LeastUsage AllocateStrategy = 2
 
 // +kubebuilder:object:root=true
 

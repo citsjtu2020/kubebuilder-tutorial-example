@@ -20,6 +20,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -30,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	elasticscalecomsjtucitv1 "backup-operator/api/v1"
 	elasticscalev1 "backup-operator/api/v1"
 	"backup-operator/controllers"
 	// +kubebuilder:scaffold:imports
@@ -44,6 +46,7 @@ func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 
 	_ = elasticscalev1.AddToScheme(scheme)
+	_ = elasticscalecomsjtucitv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -99,12 +102,18 @@ func main() {
 
 	// 创建BackupDeploymentReconciler
 	if err = (&controllers.BackupDeploymentReconciler{
-		Client:    mgr.GetClient(),
-		Clientset: *clientset,
-		Log:       ctrl.Log.WithName("controllers").WithName("BackupDeployment"),
-		Scheme:    mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Clientset:  *clientset,
+		Log:        ctrl.Log.WithName("controllers").WithName("BackupDeployment"),
+		Scheme:     mgr.GetScheme(),
+		StatusLock: new(sync.RWMutex),
+		Eventer:    mgr.GetEventRecorderFor("backupdeployment-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "BackupDeployment")
+		os.Exit(1)
+	}
+	if err = (&elasticscalecomsjtucitv1.BackupDeployment{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "BackupDeployment")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

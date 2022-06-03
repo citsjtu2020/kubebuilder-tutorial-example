@@ -60,6 +60,7 @@ type BackupDeploymentReconciler struct {
 	Log    logr.Logger
 	Scheme *runtime.Scheme
 	StatusLock *sync.RWMutex
+	//Eventer record.EventRecorder
 	Eventer record.EventRecorder
 	Clock
 }
@@ -104,16 +105,10 @@ var activeType deployType = "active"
 //two ways of create / scheduling method:
 // 1. the pod in the same of mutiple hosts as on deployment
 // 2. the pod scheduled to different
-type ScheduleStrategy int
-var ScheduleOnSameHosts ScheduleStrategy = 1
-var ScheduleOnSameHostsHard ScheduleStrategy = 2
-var ScheduleRoundBin ScheduleStrategy = 3
-var ScheduleRoundBinHard ScheduleStrategy = 4
+
 var PodAntiAffinityWeight int = 10
 
-type AllocateStrategy int
-var BinPacking AllocateStrategy = 1
-var LeastUsage AllocateStrategy = 2
+
 
 type ScaleInType int
 var ScaleInRunning ScaleInType = 1
@@ -140,7 +135,6 @@ var MaxSafeReplicasOnOneHost = 5
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
-
 
 func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrlresults ctrl.Result, errdefer error) {
 	//_ = context.Background()
@@ -860,7 +854,7 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrlresults ct
 
 
 
-func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]int,usingbacknum int,aim_scale_out int,strategy ScheduleStrategy,alloc_strate AllocateStrategy,unitreplicas int)(map[deployType][]map[string]int,map[deployType][]int){
+func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]int,usingbacknum int,aim_scale_out int,strategy elasticscalev1.ScheduleStrategy,alloc_strate elasticscalev1.AllocateStrategy,unitreplicas int)(map[deployType][]map[string]int,map[deployType][]int){
 	//deployType
 	total_back_resources := make(map[string]int)
 	if usingNodes != nil{
@@ -930,13 +924,11 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 				if len(total_back_resources) <=0{
 					break
 				}
-				// keysets 每个节点空出来的pod数量的set
-				// can_be_assigned 是一个map， key:keysets中的值, value:node的组合
 				can_be_assigned,keysets := getNumToNode(total_back_resources)
-				if strategy == ScheduleOnSameHostsHard || strategy == ScheduleOnSameHosts{
+				if strategy == elasticscalev1.ScheduleOnSameHostsHard || strategy == elasticscalev1.ScheduleOnSameHosts{
 					can_max_nodes := can_be_assigned[keysets[len(keysets)-1]]//gots +=
 					can_max := keysets[len(keysets)-1]
-					if alloc_strate == BinPacking{
+					if alloc_strate == elasticscalev1.BinPacking{
 						idx := -1
 						for id0 :=0;id0 < len(keysets);id0++{
 							if keysets[id0] > 0{
@@ -978,7 +970,6 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 				}
 			}
 			//gots +=
-			// 实际分配的数量
 			allocated_backup += gots
 			real_backups = append(real_backups,gots)
 			results[waitingType] = append(results[waitingType],tmpMap)
@@ -990,7 +981,6 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 		}
 		resultsreplicas[waitingType] = resultsreplicas[waitingType][:len(real_backups)]
 	}
-	// 生成一些随便放的pod
 	activeNum := aim_scale_out - allocated_backup
 	if activeNum > 0{
 		results[activeType] = make([]map[string]int,0)
@@ -1024,7 +1014,7 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 	return results,resultsreplicas
 }
 
-func RoundBinFunc(input map[string]int,upperbound int,alloc_strategy AllocateStrategy) (map[string]int,int){
+func RoundBinFunc(input map[string]int,upperbound int,alloc_strategy elasticscalev1.AllocateStrategy) (map[string]int,int){
 	if len(input) <= 0 || input == nil{
 		return nil,0
 	}
@@ -1047,7 +1037,7 @@ func RoundBinFunc(input map[string]int,upperbound int,alloc_strategy AllocateStr
 				break
 			}
 			NumToNode,keyset := getNumToNode(tmpmap)
-			if alloc_strategy == BinPacking{
+			if alloc_strategy == elasticscalev1.BinPacking{
 				for idx := 0;idx < len(keyset);idx++{
 					if allocated >= upperbound{
 						break
@@ -1458,7 +1448,7 @@ func (r *BackupDeploymentReconciler) findScaleInDeploys(input map[elasticscalev1
 // 1. the pod in the same of mutiple hosts as on deployment
 // 2. the pod scheduled to different
 func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploycrd *elasticscalev1.BackupDeployment,
-	req ctrl.Request, types deployType,strategy ScheduleStrategy,replicas *int32, hostLabels map[string]int) (int,*appsv1.Deployment, error) {
+	req ctrl.Request, types deployType,strategy elasticscalev1.ScheduleStrategy,replicas *int32, hostLabels map[string]int) (int,*appsv1.Deployment, error) {
 	log := r.Log.WithValues("func", "createDeployment")
 	if *replicas <= 0{
 		return -1,nil,nil
@@ -1500,22 +1490,22 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 	deploy.Spec.Template.Labels[deployIDKey] = deployName
 
 	switch strategy {
-	case ScheduleOnSameHosts:
+	case elasticscalev1.ScheduleOnSameHosts:
 		log.V(1).Info("Strategy for this deploy is ScheduleOnSameHosts")
-	case ScheduleRoundBin:
+	case elasticscalev1.ScheduleRoundBin:
 		log.V(1).Info("Strategy for this deploy is ScheduleRoundBin")
-	case ScheduleOnSameHostsHard:
+	case elasticscalev1.ScheduleOnSameHostsHard:
 		log.V(1).Info("Strategy for this deploy is ScheduleOnSameHostsHard")
-	case ScheduleRoundBinHard:
+	case elasticscalev1.ScheduleRoundBinHard:
 		log.V(1).Info("Strategy for this deploy is ScheduleRoundBinHard")
 	default:
-		strategy = ScheduleOnSameHosts
+		strategy = elasticscalev1.ScheduleOnSameHosts
 
 	}
 
-	if strategy == ScheduleOnSameHosts || strategy == ScheduleRoundBin{
+	if strategy == elasticscalev1.ScheduleOnSameHosts || strategy == elasticscalev1.ScheduleRoundBin{
 		nowweight := 1.0
-		if strategy == ScheduleRoundBin {
+		if strategy == elasticscalev1.ScheduleRoundBin {
 			nowweight = 1.2
 		}else {
 			nowweight = 1.0
@@ -1578,7 +1568,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 
 		} else{
 			//nowweight := 1.0
-			if strategy == ScheduleOnSameHosts {
+			if strategy == elasticscalev1.ScheduleOnSameHosts {
 				nowweight = 0.5
 			}
 			podantiaffinity = &corev1.PodAntiAffinity{
@@ -1616,8 +1606,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 			deploy.Spec.Template.Spec.Affinity = allocAffinity
 		}
 
-	}else if strategy == ScheduleOnSameHostsHard{
-		// 必须分配在这些节点
+	}else if strategy == elasticscalev1.ScheduleOnSameHostsHard{
 		var nodeaffinity *corev1.NodeAffinity = nil
 		var podantiaffinity *corev1.PodAntiAffinity = nil
 		if hostLabels != nil && len(hostLabels) > 0{
@@ -1699,7 +1688,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 	}else{
 		// roundbin
 		nowweight := 1.5
-		if strategy == ScheduleRoundBin {
+		if strategy == elasticscalev1.ScheduleRoundBin {
 			nowweight = 1.2
 		}else {
 			nowweight = 1.5
@@ -1899,17 +1888,17 @@ func (r *BackupDeploymentReconciler) ReadBackupAction(deploycrd *elasticscalev1.
 	return deploycrd.Spec.Action
 }
 
-func (r *BackupDeploymentReconciler)ReadStrategyStrategy(deploycrd *elasticscalev1.BackupDeployment) (ScheduleStrategy,bool) {
+func (r *BackupDeploymentReconciler)ReadStrategyStrategy(deploycrd *elasticscalev1.BackupDeployment) (elasticscalev1.ScheduleStrategy,bool) {
 	r.StatusLock.RLock()
 	defer r.StatusLock.RUnlock()
-	statusstrategy := ScheduleOnSameHosts
-	specstrategy := ScheduleOnSameHosts
+	statusstrategy := elasticscalev1.ScheduleOnSameHosts
+	specstrategy := elasticscalev1.ScheduleOnSameHosts
 	if deploycrd.Status.ScheduleStrategy != nil{
-		statusstrategy = ScheduleStrategy(int(*deploycrd.Status.ScheduleStrategy))
+		statusstrategy = elasticscalev1.ScheduleStrategy(int(*deploycrd.Status.ScheduleStrategy))
 		//return ,nil
 	}
 	if deploycrd.Spec.ScheduleStrategy != nil{
-		specstrategy = ScheduleStrategy(int(*deploycrd.Spec.ScheduleStrategy))
+		specstrategy = elasticscalev1.ScheduleStrategy(int(*deploycrd.Spec.ScheduleStrategy))
 		//return ScheduleStrategy(*deploycrd.Spec.ScheduleStrategy),nil
 	}
 	if statusstrategy != specstrategy || deploycrd.Status.ScheduleStrategy== nil{
@@ -1919,17 +1908,17 @@ func (r *BackupDeploymentReconciler)ReadStrategyStrategy(deploycrd *elasticscale
 	}
 }
 
-func (r *BackupDeploymentReconciler)ReadAllocateStrategy(deploycrd *elasticscalev1.BackupDeployment) (AllocateStrategy,bool) {
+func (r *BackupDeploymentReconciler)ReadAllocateStrategy(deploycrd *elasticscalev1.BackupDeployment) (elasticscalev1.AllocateStrategy,bool) {
 	r.StatusLock.RLock()
 	defer r.StatusLock.RUnlock()
-	statusstrategy := BinPacking
-	specstrategy := BinPacking
+	statusstrategy := elasticscalev1.BinPacking
+	specstrategy := elasticscalev1.BinPacking
 	if deploycrd.Status.AllocateStrategy != nil{
-		statusstrategy = AllocateStrategy(int(*deploycrd.Status.AllocateStrategy))
+		statusstrategy = elasticscalev1.AllocateStrategy(int(*deploycrd.Status.AllocateStrategy))
 		//return ,nil
 	}
 	if deploycrd.Spec.AllocateStrategy != nil{
-		specstrategy = AllocateStrategy(int(*deploycrd.Spec.AllocateStrategy))
+		specstrategy = elasticscalev1.AllocateStrategy(int(*deploycrd.Spec.AllocateStrategy))
 		//return ScheduleStrategy(*deploycrd.Spec.ScheduleStrategy),nil
 	}
 	if statusstrategy != specstrategy || deploycrd.Status.AllocateStrategy== nil{
@@ -1989,7 +1978,7 @@ func (r *BackupDeploymentReconciler)UpdateUnitReplicas(ctx context.Context,deplo
 func (r *BackupDeploymentReconciler)UpdateScheduleStrategy(ctx context.Context,deploycrd *elasticscalev1.BackupDeployment) (error) {
 	r.StatusLock.Lock()
 	defer r.StatusLock.Unlock()
-	tmpSpec := int64(ScheduleOnSameHosts)
+	tmpSpec := int64(elasticscalev1.ScheduleOnSameHosts)
 	if deploycrd.Spec.ScheduleStrategy != nil {
 		tmpSpec = int64(*deploycrd.Spec.ScheduleStrategy)
 	}
@@ -2006,7 +1995,7 @@ func (r *BackupDeploymentReconciler)UpdateScheduleStrategy(ctx context.Context,d
 func (r *BackupDeploymentReconciler)UpdateAllocateStrategy(ctx context.Context,deploycrd *elasticscalev1.BackupDeployment) (error) {
 	r.StatusLock.Lock()
 	defer r.StatusLock.Unlock()
-	tmpSpec := int64(BinPacking)
+	tmpSpec := int64(elasticscalev1.BinPacking)
 	if deploycrd.Spec.AllocateStrategy != nil {
 		tmpSpec = int64(*deploycrd.Spec.AllocateStrategy)
 	}
