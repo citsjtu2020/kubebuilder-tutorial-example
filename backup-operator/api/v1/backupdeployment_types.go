@@ -42,10 +42,10 @@ type BackupDeploymentSpec struct {
 
 	// +kubebuilder:validation:MinLength=0
 	Action string `json:"action"` // control the backup to waiting or running
-
+	// 调度到同一台/均衡
 	// +kubebuilder:validation:Minimum=0
 	ScheduleStrategy *int64 `json:"scheduleStrategy"`
-
+// 选择机器，选择资源最多的、最少的
 	// +kubebuilder:validation:Minimum=0
 	AllocateStrategy *int64 `json:"allocateStrategy"`
 
@@ -54,7 +54,7 @@ type BackupDeploymentSpec struct {
 
 	// +kubebuilder:validation:Minimum=1
 	RunningReplicas *int64 `json:"runningReplicas"` // at last 1  replica need to be running
-
+	// 一个deploy最大的副本数
 	UnitReplicas *int64 `json:"unitReplicas"`
 
 	BackupSpec appsv1.DeploymentSpec `json:"backupSpec"`

@@ -273,9 +273,9 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrlresults ct
 				}else{
 					usingBackDeploys = nil
 				}
-
+// 返回每个机器可以空出来几个pod，pod总数
 				usingBackNode,totalback := r.FindAllNodeMap(ctx,usingBackDeploys)
-
+// 生成方案
 				creationplans,createreplicas:= r.GenerateCreationPlan(usingBackNode,totalback,aim_scale_out,nowScheduleStrategy,nowAllocateStrategy,nowUnitReplicas)
 
 				if usingBackDeploys != nil && len(usingBackDeploys) > 0{
@@ -371,7 +371,7 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrlresults ct
 					}
 				}
 				creationplans,createreplicas := r.GenerateCreationPlan(tmpLabels,totalback,aim_scale_out,nowScheduleStrategy,nowAllocateStrategy,nowUnitReplicas)
-
+// 要删除的index
 				if len(deletedkey) > 0{
 					for _,deletedid := range deletedkey{
 						tempDeploy := backDeploys[deletedid]
@@ -558,6 +558,7 @@ func (r *BackupDeploymentReconciler) Reconcile(req ctrl.Request) (ctrlresults ct
 				tmpStatedMaps := make(map[elasticscalev1.DeployState]map[int]*appsv1.Deployment)
 				tmpStatedMaps[elasticscalev1.WaitingState] = waitDeploys
 				tmpStatedMaps[elasticscalev1.ActiveState] = activeDeploys
+				// ScaleInRunning 删waiting的和active
 				deletes,scalein := r.findScaleInDeploys(tmpStatedMaps,aim_scale_in,ScaleInRunning)
 				if len(deletes[elasticscalev1.WaitingState]) > 0 {
 					for _, delete2 := range deletes[elasticscalev1.WaitingState] {
@@ -880,7 +881,9 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 		usingbacknum = 0
 	}
 
-
+// 每个Node上放几个pod的分配方案
+// 每个deploy一个map，组成一个map数组
+// 每个deploy有几个副本
 	results := make(map[deployType][]map[string]int)
 	resultsreplicas := make(map[deployType][]int)
 	//results[activeType] = make([]map[string]int,0)
@@ -927,6 +930,8 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 				if len(total_back_resources) <=0{
 					break
 				}
+				// keysets 每个节点空出来的pod数量的set
+				// can_be_assigned 是一个map， key:keysets中的值, value:node的组合
 				can_be_assigned,keysets := getNumToNode(total_back_resources)
 				if strategy == ScheduleOnSameHostsHard || strategy == ScheduleOnSameHosts{
 					can_max_nodes := can_be_assigned[keysets[len(keysets)-1]]//gots +=
@@ -973,6 +978,7 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 				}
 			}
 			//gots +=
+			// 实际分配的数量
 			allocated_backup += gots
 			real_backups = append(real_backups,gots)
 			results[waitingType] = append(results[waitingType],tmpMap)
@@ -984,6 +990,7 @@ func (r *BackupDeploymentReconciler)GenerateCreationPlan(usingNodes map[string]i
 		}
 		resultsreplicas[waitingType] = resultsreplicas[waitingType][:len(real_backups)]
 	}
+	// 生成一些随便放的pod
 	activeNum := aim_scale_out - allocated_backup
 	if activeNum > 0{
 		results[activeType] = make([]map[string]int,0)
@@ -1333,6 +1340,7 @@ func (r *BackupDeploymentReconciler) findScaleInDeploys(input map[elasticscalev1
 	deletes := make(map[elasticscalev1.DeployState][]*IndexedDeploy)
 	//deletes["wait"] = []*IndexedDeploy{}
 	//deletes["active"] = []*IndexedDeploy{}
+	// 缩的数量
 	scalein := make(map[elasticscalev1.DeployState]map[int][]*IndexedDeploy)
 	//scalein["wait"] = make(map[int][]*IndexedDeploy)
 	//scalein["active"] = make(map[int][]*IndexedDeploy)
@@ -1371,6 +1379,7 @@ func (r *BackupDeploymentReconciler) findScaleInDeploys(input map[elasticscalev1
 				}
 			}
 		}
+		// 缩的量不够，缩active的
 		if now_scale < aim_scale_in {
 			deletes[elasticscalev1.ActiveState] = []*IndexedDeploy{}
 			scalein[elasticscalev1.ActiveState] = make(map[int][]*IndexedDeploy)
@@ -1405,6 +1414,7 @@ func (r *BackupDeploymentReconciler) findScaleInDeploys(input map[elasticscalev1
 			}
 		}
 	}else{
+		// 缩backup
 		if _,ok := input[elasticscalev1.BackupState];ok && len(input[elasticscalev1.BackupState]) > 0 {
 			deletes[elasticscalev1.BackupState] = []*IndexedDeploy{}
 			scalein[elasticscalev1.BackupState] = make(map[int][]*IndexedDeploy)
@@ -1542,6 +1552,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 				//nodeaffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(nodeaffinity.PreferredDuringSchedulingIgnoredDuringExecution,corev1.PreferredSchedulingTerm{
 				//	We
 				//})
+				// pod数量 * 10 + 10
 				tmpscore := PreferrNodeWeight(hostvalue)
 
 				if _,ok := weighttohosts[tmpscore];!ok{
@@ -1606,6 +1617,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 		}
 
 	}else if strategy == ScheduleOnSameHostsHard{
+		// 必须分配在这些节点
 		var nodeaffinity *corev1.NodeAffinity = nil
 		var podantiaffinity *corev1.PodAntiAffinity = nil
 		if hostLabels != nil && len(hostLabels) > 0{
@@ -1685,6 +1697,7 @@ func createDeployment(ctx context.Context, r *BackupDeploymentReconciler, deploy
 			deploy.Spec.Template.Spec.Affinity = allocAffinity
 		}
 	}else{
+		// roundbin
 		nowweight := 1.5
 		if strategy == ScheduleRoundBin {
 			nowweight = 1.2
