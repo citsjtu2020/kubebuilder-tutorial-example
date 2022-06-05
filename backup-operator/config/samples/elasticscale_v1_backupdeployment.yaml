@@ -8,8 +8,11 @@ spec:
     - "webapp-service"
   initalWait: 2000 #单位为豪秒
   action: waiting
+  scheduleStrategy: 1
+  allocateStrategy: 1
   backupReplicas: 3
-  runningReplicas: 1
+  runningReplicas: 2
+  unitReplicas: 0
   backupSpec:
     selector:
       matchLabels:

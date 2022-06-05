@@ -1,0 +1,52 @@
+
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  creationTimestamp: null
+  name: mutating-webhook-configuration
+webhooks:
+- clientConfig:
+    caBundle: Cg==
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-elasticscale-com-sjtu-cit-com-sjtu-cit-v1-backupdeployment
+  failurePolicy: Fail
+  name: mbackupdeployment.kb.io
+  rules:
+  - apiGroups:
+    - elasticscale.com.sjtu.cit.com.sjtu.cit
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - backupdeployments
+
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: ValidatingWebhookConfiguration
+metadata:
+  creationTimestamp: null
+  name: validating-webhook-configuration
+webhooks:
+- clientConfig:
+    caBundle: Cg==
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-elasticscale-com-sjtu-cit-com-sjtu-cit-v1-backupdeployment
+  failurePolicy: Fail
+  name: vbackupdeployment.kb.io
+  rules:
+  - apiGroups:
+    - elasticscale.com.sjtu.cit.com.sjtu.cit
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - backupdeployments

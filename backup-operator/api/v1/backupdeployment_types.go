@@ -38,14 +38,14 @@ type BackupDeploymentSpec struct {
 
 	// +kubebuilder:validation:Minimum=0
 	// +optional
-	InitalWait *int64 //default: ms
+	InitalWait *int64 `json:"initalWait"` //default: ms
 
 	// +kubebuilder:validation:MinLength=0
 	Action string `json:"action"` // control the backup to waiting or running
 	// 调度到同一台/均衡
 	// +kubebuilder:validation:Minimum=0
 	ScheduleStrategy *int64 `json:"scheduleStrategy"`
-// 选择机器，选择资源最多的、最少的
+	// 选择机器，选择资源最多的、最少的
 	// +kubebuilder:validation:Minimum=0
 	AllocateStrategy *int64 `json:"allocateStrategy"`
 
@@ -79,7 +79,7 @@ type BackupDeploymentStatus struct {
 	LastID *int64 `json:"last_id,omitempty"`
 
 	// +optional
-	Status string
+	Status string `json:"status,omitempty"`
 
 	// +optional
 	ScheduleStrategy *int64 `json:"scheduleStrategy,omitempty"`
@@ -88,7 +88,7 @@ type BackupDeploymentStatus struct {
 	AllocateStrategy *int64 `json:"allocateStrategy,omitempty"`
 
 	// +optionl
-	UnitReplicas *int64 `json:"unitReplicas"`
+	UnitReplicas *int64 `json:"unitReplicas,omitempty"`
 
 	// Information when was the last time the job was successfully scheduled.
 	// +optional
@@ -125,12 +125,14 @@ type BackupDeployment struct {
 }
 
 type ScheduleStrategy int
+
 var ScheduleOnSameHosts ScheduleStrategy = 1
 var ScheduleOnSameHostsHard ScheduleStrategy = 2
 var ScheduleRoundBin ScheduleStrategy = 3
 var ScheduleRoundBinHard ScheduleStrategy = 4
 
 type AllocateStrategy int
+
 var BinPacking AllocateStrategy = 1
 var LeastUsage AllocateStrategy = 2
 

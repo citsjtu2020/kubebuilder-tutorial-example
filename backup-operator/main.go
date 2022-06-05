@@ -112,9 +112,11 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "BackupDeployment")
 		os.Exit(1)
 	}
-	if err = (&elasticscalecomsjtucitv1.BackupDeployment{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "BackupDeployment")
-		os.Exit(1)
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err = (&elasticscalecomsjtucitv1.BackupDeployment{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "BackupDeployment")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

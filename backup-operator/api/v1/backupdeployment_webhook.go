@@ -48,19 +48,19 @@ func (r *BackupDeployment) Default() {
 	backupdeploymentlog.Info("default", "name", r.Name)
 
 	// TODO(user): fill in your defaulting logic.
-	if r.Spec.AllocateStrategy == nil{
+	if r.Spec.AllocateStrategy == nil {
 		tmpallocate := int64(BinPacking)
 		r.Spec.AllocateStrategy = new(int64)
 		*r.Spec.AllocateStrategy = tmpallocate
 	}
 
-	if r.Spec.ScheduleStrategy == nil{
+	if r.Spec.ScheduleStrategy == nil {
 		tmpschedule := int64(ScheduleOnSameHosts)
 		r.Spec.ScheduleStrategy = new(int64)
 		*r.Spec.ScheduleStrategy = tmpschedule
 	}
 
-	if r.Spec.UnitReplicas == nil{
+	if r.Spec.UnitReplicas == nil {
 		tmpreplicas := int64(0)
 		r.Spec.ScheduleStrategy = new(int64)
 		*r.Spec.UnitReplicas = tmpreplicas
@@ -122,9 +122,9 @@ func (r *BackupDeployment) validateBackupDeployment() error {
 	//	allErrs = append(allErrs, err)
 	//}
 	specerr := r.validateBackupDeploymentSpec()
-	if specerr != nil && len(specerr) > 0{
-		for _,err0 := range specerr{
-			allErrs = append(allErrs,err0)
+	if specerr != nil && len(specerr) > 0 {
+		for _, err0 := range specerr {
+			allErrs = append(allErrs, err0)
 		}
 	}
 
@@ -142,10 +142,10 @@ func (r *BackupDeployment) validateBackupDeploymentSpec() field.ErrorList {
 	//	field.NewPath("spec").Child("schedule"))
 	var allErrs field.ErrorList
 	//var allerr error = nil
-	if err := validateScheduleStrtegyFormat(r.Spec.ScheduleStrategy,field.NewPath("spec").Child("scheduleStrategy")); err != nil {
+	if err := validateScheduleStrtegyFormat(r.Spec.ScheduleStrategy, field.NewPath("spec").Child("scheduleStrategy")); err != nil {
 		allErrs = append(allErrs, err)
 	}
-	if err := validateAllocateStrtegyFormat(r.Spec.AllocateStrategy,field.NewPath("spec").Child("allocateStrategy")); err != nil {
+	if err := validateAllocateStrtegyFormat(r.Spec.AllocateStrategy, field.NewPath("spec").Child("allocateStrategy")); err != nil {
 		allErrs = append(allErrs, err)
 	}
 	if len(allErrs) == 0 {
@@ -166,9 +166,9 @@ is well-formatted.
 
 func validateScheduleStrtegyFormat(strategy *int64, fldPath *field.Path) *field.Error {
 	var err error = nil
-	if strategy == nil{
+	if strategy == nil {
 		return nil
-	}else{
+	} else {
 		tmpstrategy := ScheduleStrategy(int(*strategy))
 		switch tmpstrategy {
 		case ScheduleOnSameHosts:
@@ -187,17 +187,17 @@ func validateScheduleStrtegyFormat(strategy *int64, fldPath *field.Path) *field.
 			err = errors.New("Invalid ScheduleStrategy")
 		}
 	}
-	if err != nil{
-		return field.Invalid(fldPath,*strategy,err.Error())
+	if err != nil {
+		return field.Invalid(fldPath, *strategy, err.Error())
 	}
 	return nil
 }
 
 func validateAllocateStrtegyFormat(strategy *int64, fldPath *field.Path) *field.Error {
 	var err error = nil
-	if strategy == nil{
+	if strategy == nil {
 		return nil
-	}else{
+	} else {
 		tmpstrategy := AllocateStrategy(int(*strategy))
 		switch tmpstrategy {
 		case BinPacking:
@@ -209,10 +209,8 @@ func validateAllocateStrtegyFormat(strategy *int64, fldPath *field.Path) *field.
 			err = errors.New("Invalid ScheduleStrategy")
 		}
 	}
-	if err != nil{
-		return field.Invalid(fldPath,*strategy,err.Error())
+	if err != nil {
+		return field.Invalid(fldPath, *strategy, err.Error())
 	}
 	return nil
 }
-
-
